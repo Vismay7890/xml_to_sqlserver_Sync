@@ -1,39 +1,74 @@
 ﻿using System;
 using System.Configuration;
 using System.Data;
-using LogLibrary;
-using datareader;
+using latlog;
+using Roughdb;
+using System.IO;
+using Roughdb;
+
 class MainDriver
 {
     static void Main()
     {
-        Logger logger = new Logger();
-        Reader dataReader = new Reader();       
-
         try
         {
+            databaseloader dbload = new databaseloader();
+            xmlreader xmlreader = new xmlreader();
             string connectionString = ConfigurationManager.AppSettings["ConnectionString"];
-            string tableName = ConfigurationManager.AppSettings["TableName"];
-            string schemaXmlFilePath = ConfigurationManager.AppSettings["SchemaFilePath"];
-            string dataXmlFilePath = ConfigurationManager.AppSettings["DataFilePath"];
+            string tableNamesString = ConfigurationManager.AppSettings["TableNames"];
+            string[] tableNames = tableNamesString.Split(',');
 
-            Logger.Log("Program started.");
+            string xmlFolderPath = ConfigurationManager.AppSettings["XmlFolderPath"];
 
+            Latlog.Log(LogLevel.Info, "Program started.");
 
-            if (!dataReader.TableExists(logger ,connectionString, tableName))
+            foreach (string tableName in tableNames)
             {
-                dataReader.CreateTable(logger,connectionString, tableName, schemaXmlFilePath);
+                // Get all XML files for the current table in the specified folder
+                string[] dataAndSchemaFiles = Directory.GetFiles(xmlFolderPath, $"{tableName}_*.xml");
+
+                // Separate data and schema files
+                string dataFile = dataAndSchemaFiles.FirstOrDefault(f => f.EndsWith("_data.xml"));
+                string schemaFile = dataAndSchemaFiles.FirstOrDefault(f => f.EndsWith("_tableType.xml"));
+                Console.WriteLine($"Processing files for table {tableName}:");
+                Console.WriteLine($"Data file: {dataFile}");
+                Console.WriteLine($"Schema file: {schemaFile}");
+                // Process if both data and schema files are found
+                if (!string.IsNullOrEmpty(dataFile) && !string.IsNullOrEmpty(schemaFile))
+                {
+                    DataTable schemaTable = xmlreader.LoadSchemaTable(tableName, schemaFile);
+                    string primaryKeyColumnName = databaseloader.InferPrimaryKeyColumnName(schemaTable);
+
+                    if (!dbload.TableExists(connectionString, tableName))
+                    {
+                        dbload.CreateTable(connectionString, tableName, schemaTable);
+                    }
+
+                    DataTable dataTable = xmlreader.LoadDataTable(tableName, dataFile, schemaTable);
+
+                    dbload.InsertDataInSql(connectionString, schemaTable, tableName , primaryKeyColumnName , dataTable);
+
+                    //Latlog.Log(LogLevel.Info, $"Table {tableName}_clone created and data inserted for {Path.GetFileName(dataFile)}.");
+                }
+                else
+                {
+                    Latlog.Log(LogLevel.Error, $"Skipping table creation for {tableName}_clone. Data or schema file not found.");
+                }
             }
 
-            DataTable schemaTable = dataReader.LoadSchemaTable(logger , tableName ,schemaXmlFilePath);
-            DataTable dataTable = dataReader.LoadDataTable(logger,tableName,dataXmlFilePath, schemaTable);
-            dataReader.InsertDataInSql(logger,dataTable, connectionString , tableName);
-            
-            Logger.Log("Program completed successfully.");
+            Latlog.Log(LogLevel.Info, "Program completed successfully.");
         }
         catch (Exception ex)
         {
-            Logger.Log($"Exception occurred: {ex.Message}");
+            Latlog.Log(LogLevel.Error, $"Exception occurred: {ex.Message}");
         }
     }
 }
+
+
+
+
+
+
+
+
